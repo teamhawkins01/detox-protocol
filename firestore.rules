@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == 'teamhawkins01@gmail.com' || 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if true;
+      
+      allow create: if isOwner(userId) && 
+        (
+          isAdmin() || 
+          (
+            request.resource.data.get('role', 'user') != 'admin' && 
+            request.resource.data.get('isAdmin', false) != true && 
+            request.resource.data.get('currentLevel', 1) <= 10
+          )
+        );
+        
+      allow update: if isOwner(userId) && 
+        (
+          isAdmin() || 
+          (
+            !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isAdmin']) && 
+            request.resource.data.get('currentLevel', 1) <= 10
+          )
+        );
+        
+      allow delete: if isAdmin();
+    }
+
+    // Protocols collection
+    match /protocols/{protocolId} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      match /ratings/{userId} {
+        allow read: if true;
+        allow create, update: if isOwner(userId);
+        allow delete: if isAdmin();
+      }
+    }
+
+    // System logs and analytics
+    match /system_logs/{logId} {
+      allow create: if isAuthenticated();
+    }
+    match /analytics/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Default rule for other collections
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
